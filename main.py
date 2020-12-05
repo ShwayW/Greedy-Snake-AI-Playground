@@ -1,8 +1,8 @@
 # Author: Shway Wang
 # Date: 2020/12/3
-import numpy as np
 import time
 from util import *
+from rl_solver import *
 
 class GameWindow(object):
     def __init__(self, w, h, title):
@@ -19,10 +19,14 @@ class GameWindow(object):
         self.wall_thickness = 3
         # Initialize the snake object:
         self.snake = Snake()
-        self.food = Food(self.snake.snake_segments)
+        self.food = Food(w, h, self.snake.snake_segments)
+        # Initialize Boundary:
+        self.boundary = self.draw_boundary()
         # Flag indicates if the loop ends:
         self.done = True
         self.quit = False
+        # Initilize the AI stuff:
+        self.rl_solver = RL_Solver(agent_type = 'q_learning')
 
     def handle_event(self, event):
         if event is None:
@@ -36,12 +40,16 @@ class GameWindow(object):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_LEFT:
                 self.snake.turn_left()
-            if event.key == pygame.K_RIGHT:
+                return LEFT
+            elif event.key == pygame.K_RIGHT:
                 self.snake.turn_right()
-            if event.key == pygame.K_UP:
+                return RIGHT
+            elif event.key == pygame.K_UP:
                 self.snake.turn_up()
-            if event.key == pygame.K_DOWN:
+                return UP
+            elif event.key == pygame.K_DOWN:
                 self.snake.turn_down()
+                return DOWN
 
     def draw_boundary(self):
         up_bound = 26
@@ -103,13 +111,55 @@ class GameWindow(object):
         # Flip screen
         pygame.display.flip()
 
-    def gameLoop(self, game_speed = 7):
+    def snake_actions_and_AI(self, event, episode):
+        self.rl_solver.epsilon = 1 / episode
+        # Current state:
+        self.snake.sence(self.food, self.boundary)
+        cur_state = State(self.snake.sence_dist, self.snake.sence_matrix)
+        # update the savt if current state is not in savt:
+        if cur_state not in self.rl_solver.savt.content:
+            cur_action_set = {UP:0, RIGHT:0, DOWN:0, LEFT:0}
+            self.rl_solver.savt.addNewStateActionSet(cur_state, cur_action_set)
+        #cur_action = self.handle_event(event) # the snake moves
+        cur_action = self.rl_solver.agent.selectAction(self.rl_solver.savt.content[cur_state])
+        if cur_action == UP: self.snake.turn_up()
+        elif cur_action == RIGHT: self.snake.turn_right()
+        elif cur_action == DOWN: self.snake.turn_down()
+        elif cur_action == LEFT: self.snake.turn_left()
+        # Snake move one more step, this function also is the reward function:
+        ret = self.snake.move_and_getRet(self.food)
+        # detect collision:
+        if self.is_collision(self.snake.get_snake_head_pos(),
+            self.snake.snake_segments, self.boundary):
+            ret -= 1000
+            self.done = True
+            # reinit the snake and foods:
+            self.snake = Snake()
+            self.food = Food(self.screen_width, self.screen_height, self.snake.snake_segments)
+        # Next state:
+        self.snake.sence(self.food, self.boundary)
+        next_state = State(self.snake.sence_dist, self.snake.sence_matrix)
+        # update the savt if current state is not in savt:
+        if next_state not in self.rl_solver.savt.content:
+            next_action_set = {UP:0, RIGHT:0, DOWN:0, LEFT:0}
+            self.rl_solver.savt.addNewStateActionSet(next_state, next_action_set)
+        # Next action:
+        next_action = self.rl_solver.agent.selectAction(self.rl_solver.savt.content[next_state])
+        # Update savt:
+        self.rl_solver.agent.updateActionValue(self.rl_solver.savt,
+            cur_state, cur_action, next_state, next_action, ret)
+        return ret
+
+    def gameLoop(self, game_speed = 0):
         # begin the game loop:
         clock = pygame.time.Clock()
         event_buffer = []
         self.start_game_message()
         new_game = True
+        # FIXME
+        episode = 0
         while not self.quit:
+            '''
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.quit = True
@@ -124,23 +174,28 @@ class GameWindow(object):
                         # initialize the snake:
                         self.snake = Snake()
                         self.food = Food(self.snake.snake_segments)
+                        '''
             # game loop:
+            episode += 1
+            accum_ret = 0
+            self.done = False
             while not self.done:
                 for e in pygame.event.get():
                     if e.type == pygame.KEYDOWN or e.type == pygame.QUIT:
                         event_buffer.append(e)
                 event = event_buffer.pop(0) if len(event_buffer) > 0 else None
-                self.handle_event(event)
-                # Snake take a step, this function also checks if a food is ate:
-                self.snake.take_one_step(self.food)
+
+                # This is where the AI come into play:
+                accum_ret += self.snake_actions_and_AI(event, episode)
+
                 # -- Draw everything
                 # Clear screen
                 self.screen.fill(BLACK)
-                # draw the boundary:
-                boundary = self.draw_boundary()
                 # draw the snake and the food:
                 self.snake.draw_snake(self.screen)
                 self.food.draw_food(self.screen)
+                # draw the boundary again:
+                self.draw_boundary()
                 # game info:
                 FONT = pygame.font.SysFont("comicsans", 20)
                 message = FONT.render("Snake length: " + str(self.snake.get_snake_length()),
@@ -148,18 +203,15 @@ class GameWindow(object):
                 self.screen.blit(message, (10, 10))
                 # Flip screen
                 pygame.display.flip()
-                # detect collision:
-                if self.is_collision(self.snake.get_snake_head_pos(),
-                    self.snake.snake_segments, boundary):
-                    self.done = True
                 # Pause
                 clock.tick(game_speed)
             if not new_game:
                 self.end_game_message()
+            print("episode " + str(episode) + " got return: " + str(accum_ret))
         pygame.quit()
 
 def main():
-    GameWindow(800, 600, 'Snake').gameLoop()
+    GameWindow(400, 300, 'Snake').gameLoop()
 
 if __name__ == '__main__':
     main()
