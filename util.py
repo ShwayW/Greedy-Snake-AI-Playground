@@ -4,6 +4,25 @@ import pygame
 import random
 from rl_solver import *
 # --- Globals ---
+# Drawable metrics:
+BOUNDMARGIN_X = 30
+BOUNDMARGIN_Y = 25
+WALL_THICK = 3
+SEGSIDE_LEN = 17
+SEGMARGIN = 3
+# Sence Matrix metrics:
+SMATRIX_ROWNUM = 9
+SMATRIX_COLNUM = 12
+# Screen sizes:
+# Small screen: sence matrix would be of 4x3 size
+SCREEN_W = 2 * (BOUNDMARGIN_X + WALL_THICK) + SMATRIX_COLNUM * (SEGMARGIN + SEGSIDE_LEN)
+SCREEN_H = 2 * (BOUNDMARGIN_Y + WALL_THICK) + SMATRIX_ROWNUM * (SEGMARGIN + SEGSIDE_LEN)
+
+# Snake length:
+SNAKELEN = 3
+# Snake start position:
+SSTART_HPOS = 4
+SSTART_VPOS = 0
 # Colors
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
@@ -13,11 +32,14 @@ SPACE = 0
 WALL = 1
 FOOD = 2
 BODY = 3
+# Total number of foods:
+FOODNUM = 700
 
 class Food(object):
 	''' Class to represent a unit of food. '''
 	# Construction function:
-	def __init__(self, screen_w, screen_h, snake_segments = [], w = 18, h = 18):
+	def __init__(self, screen_w = SCREEN_W, screen_h = SCREEN_H, snake_segments = [],
+		w = SEGSIDE_LEN, h = SEGSIDE_LEN):
 		# record the screen width and height:
 		self.screen_w = screen_w
 		self.screen_h = screen_h
@@ -38,8 +60,13 @@ class Food(object):
 			self.allspriteslist.remove(self.food)
 		# food should not over lap with snake:
 		while True:
-			self.food.rect.x = random.randint(0, int(self.screen_w / 21) - 4) * 21 + 35
-			self.food.rect.y = random.randint(0, int(self.screen_h / 21) - 4) * 21 + 30
+			chunk_unit_len = SEGSIDE_LEN + SEGMARGIN
+			margin_total_x = WALL_THICK + BOUNDMARGIN_X
+			margin_total_y = WALL_THICK + BOUNDMARGIN_Y
+			x_uplimit = int((self.screen_w - 2 * margin_total_x) / chunk_unit_len - 1)
+			self.food.rect.x = random.randint(0, x_uplimit) * chunk_unit_len + margin_total_x + SEGMARGIN
+			y_uplimit = int((self.screen_h - 2 * margin_total_y) / chunk_unit_len - 1)
+			self.food.rect.y = random.randint(0, y_uplimit) * chunk_unit_len + margin_total_y + SEGMARGIN
 			bad_food = False
 			for s in snake_segments:
 				if s.rect.x == self.food.rect.x and s.rect.y == self.food.rect.y:
@@ -54,7 +81,7 @@ class Snake(object):
 	""" Class to represent the snake. """
 	# -- Methods
 	# Constructor function
-	def __init__(self, snake_len = 5, seg_w = 18, seg_h = 18, seg_m = 3, sence_dist = 10):
+	def __init__(self, snake_len = SNAKELEN, seg_w = SEGSIDE_LEN, seg_h = SEGSIDE_LEN, seg_m = SEGMARGIN):
 		# initialize the drawable:
 		self.allspriteslist = pygame.sprite.Group()
 		# Set the width and height of each snake segment
@@ -62,8 +89,6 @@ class Snake(object):
 		self.seg_h = seg_h
 		# Margin between each segment
 		self.seg_m = seg_m
-		# Get the initial sence distance:
-		self.sence_dist = sence_dist
 		# Create an initial snake
 		self.snake_segments = []
 		# Set initial speed
@@ -72,75 +97,32 @@ class Snake(object):
 		# Set initial direction:
 		self.direction = RIGHT
 		# Construct the snake body:
+		start_x = BOUNDMARGIN_X + WALL_THICK + SEGMARGIN + SSTART_HPOS * (SEGSIDE_LEN + SEGMARGIN)
+		start_y = BOUNDMARGIN_Y + WALL_THICK + SEGMARGIN + SSTART_VPOS * (SEGSIDE_LEN + SEGMARGIN)
 		for i in range(snake_len):
-			x = 245 - (self.seg_w + self.seg_m) * i
-			y = 30
+			x = start_x - (self.seg_w + self.seg_m) * i
+			y = start_y
 			segment = Segment(x, y, self.seg_w, self.seg_h)
 			self.snake_segments.append(segment)
 			self.allspriteslist.add(segment)
 		# Construct the sence matrix:
-		self.sence_matrix = np.zeros((self.sence_dist, self.sence_dist))
+		self.sence_matrix = np.zeros((SMATRIX_ROWNUM + 2, SMATRIX_COLNUM + 2))
 
 	def sence(self, food, boundary):
-		''' Can sence an area of the snake's surroundings
-		according to the sence matrix and sence distance.
-		Here each unit of pygame display is 21 pixles. '''
+		''' Matrixize the game board into a internal representation of a matrix. '''
 		# First, clear the last sence:
-		self.sence_matrix = np.zeros((self.sence_dist, self.sence_dist))
-		# Then get the position of the head of the snake:
-		head_pos = (self.snake_segments[0].rect.x, self.snake_segments[0].rect.y)
-		# See if food is in sencing range:
+		chunk_unit_len = SEGSIDE_LEN + SEGMARGIN
+		self.sence_matrix = np.zeros((SMATRIX_ROWNUM + 2, SMATRIX_COLNUM + 2)) # needs padding
+		# Food loaction:
 		food_pos = food.get_food_pos()
-		food_hor_displ = int((food_pos[0] - head_pos[0]) / 21)
-		food_ver_displ = int((food_pos[1] - head_pos[1]) / 21)
-		if (abs(food_hor_displ) <= self.sence_dist / 2 and abs(food_ver_displ) <= self.sence_dist / 2):
-			x = int(food_hor_displ - self.sence_dist / 2)
-			y = int(food_ver_displ - self.sence_dist / 2)
-			self.sence_matrix[y, x] = FOOD
-		# See if wall is in sencing range:
-		wall_up_displ = int((boundary[0] - head_pos[1]) / 21)
-		wall_right_displ = int((boundary[1] - head_pos[0]) / 21)
-		wall_down_displ = int((boundary[2] - head_pos[1]) / 21)
-		wall_left_displ = int((boundary[3] - head_pos[0]) / 21)
-		sence_up = abs(wall_up_displ) <= self.sence_dist / 2
-		sence_right = abs(wall_right_displ) <= self.sence_dist / 2
-		sence_down = abs(wall_down_displ) <= self.sence_dist / 2
-		sence_left = abs(wall_left_displ) <= self.sence_dist / 2
-		up_y, right_x, down_y, left_x = (0, 0, 0, 0)
-		if sence_up:
-			up_y = int(wall_up_displ - self.sence_dist / 2)
-			self.sence_matrix[up_y, :] = WALL
-		if sence_right:
-			right_x = int(wall_right_displ - self.sence_dist / 2)
-			self.sence_matrix[:, right_x] = WALL
-		if sence_down:
-			down_y = int(wall_down_displ - self.sence_dist / 2)
-			self.sence_matrix[down_y, :] = WALL
-		if sence_left:
-			left_x = int(wall_left_displ - self.sence_dist / 2)
-			self.sence_matrix[:, left_x] = WALL
-		# Handle the 4 corner cases:
-		if sence_up and sence_right:
-			self.sence_matrix[:up_y, :] = SPACE
-			self.sence_matrix[:, right_x + 1:] = SPACE
-		if sence_right and sence_down:
-			self.sence_matrix[:, right_x + 1:] = SPACE
-			self.sence_matrix[down_y + 1:, :] = SPACE
-		if sence_down and sence_left:
-			self.sence_matrix[down_y + 1:, :] = SPACE
-			self.sence_matrix[:, :left_x] = SPACE
-		if sence_left and sence_up:
-			self.sence_matrix[:, :left_x] = SPACE
-			self.sence_matrix[:up_y, :] = SPACE
-		# See if body is in sencing range:
+		m_food_x = int((food_pos[0] - BOUNDMARGIN_X - WALL_THICK - SEGMARGIN) / chunk_unit_len) + 1
+		m_food_y = int((food_pos[1] - BOUNDMARGIN_Y - WALL_THICK - SEGMARGIN) / chunk_unit_len) + 1
+		self.sence_matrix[m_food_y][m_food_x] = FOOD
+		# Body location:
 		for s in self.snake_segments:
-			seg_pos = (s.rect.x, s.rect.y)
-			seg_hor_displ = int((seg_pos[0] - head_pos[0]) / 21)
-			seg_ver_displ = int((seg_pos[1] - head_pos[1]) / 21)
-			if (abs(seg_hor_displ) <= self.sence_dist / 2 and abs(seg_ver_displ) <= self.sence_dist / 2):
-				x = int(seg_hor_displ - self.sence_dist / 2)
-				y = int(seg_ver_displ - self.sence_dist / 2)
-				self.sence_matrix[y, x] = BODY
+			m_seg_x = int((s.rect.x - BOUNDMARGIN_X - WALL_THICK - SEGMARGIN) / chunk_unit_len) + 1
+			m_seg_y = int((s.rect.y - BOUNDMARGIN_Y - WALL_THICK - SEGMARGIN) / chunk_unit_len) + 1
+			self.sence_matrix[m_seg_y][m_seg_x] = BODY
 
 	def get_snake_head_pos(self):
 		return (self.snake_segments[0].rect.x, self.snake_segments[0].rect.y)
@@ -161,7 +143,7 @@ class Snake(object):
 		self.allspriteslist.add(segment)
 		# return the possible rewards:
 		if is_food_consumed:
-			return 100
+			return 10
 		return -1
 
 	def if_ate_food(self, food):
@@ -210,7 +192,7 @@ class Segment(pygame.sprite.Sprite):
 	""" Class to represent one segment of the snake. """
 	# -- Methods
 	# Constructor function
-	def __init__(self, x = 0, y = 0, w = 18, h = 18, color = WHITE):
+	def __init__(self, x = 0, y = 0, w = SEGSIDE_LEN, h = SEGSIDE_LEN, color = WHITE):
 		# Call the parent's constructor
 		super().__init__()
 		# Set height, width

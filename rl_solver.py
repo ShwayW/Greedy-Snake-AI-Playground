@@ -7,11 +7,13 @@ UP = 0
 RIGHT = 1
 DOWN = 2
 LEFT = 3
+NOTHING = 4
+
 class StateActionValueTable(object):
 	def __init__(self, path):
 		self.path = path
 		self.content = dict()
-		#self.load_data()
+		self.load_data()
 
 	def addNewStateActionSet(self, cur_state, action_values):
 		# action_values is a dictionary of key:action val:values
@@ -23,22 +25,17 @@ class StateActionValueTable(object):
 	def setStateActionValue(self, state, action, value):
 		self.content[state][action] = value
 
-	def serialize(self, sence_dist, sence_matrix):
-		serial = ''
-		serial += str(sence_dist) + ';'
-		for i in sence_matrix:
-			serial += i
-		return serial
-
-	def deserialize(self, pair):
-		# the pair is the key, and is of the form:
-		# sence_dist(scalar);sence_vec(matrix)
-		sence_dist, sence_vec = pair.split(';')
-		sence_dist = int(sence_dist)
-		for i in range(0, len(sence_vec), sence_dist):
-			for j in range(i, i + sence_dist):
-				pass
-		return 
+	def deserialize(self, str_vec):
+		raw_matrix = str_vec.split(';')
+		row_num = len(raw_matrix)
+		temp = raw_matrix[0].split(',')
+		col_num = len(temp)
+		sence_matrix = np.zeros((row_num, col_num))
+		for i in range(len(raw_matrix)):
+			vec = raw_matrix[i].split(',')
+			for j in range(len(vec)):
+				sence_matrix[i][j] = int(vec[j])
+		return sence_matrix
 
 	def load_data(self):
 		with open(self.path, 'r') as f:
@@ -46,13 +43,13 @@ class StateActionValueTable(object):
 			f_content = f.readline()
 			while f_content:
 				elements = f_content.split()
-				sence_dist, sence_matrix = self.deserialize(elements.pop(0))
-				value = {}
+				sence_matrix = self.deserialize(elements.pop(0))
+				value = dict()
 				for i in elements:
 					subkey_subvalue = i.split(':')
 					realSubkey = int(subkey_subvalue[0])
 					value[realSubkey] = float(subkey_subvalue[1])
-				content[(sence_dist, sence_matrix)] = value
+				content[State(sence_matrix)] = value
 				f_content = f.readline()
 		self.content = content
 
@@ -60,21 +57,43 @@ class StateActionValueTable(object):
 		with open(self.path, 'w') as f:
 			for i in self.content:
 				line = ''
-				line += self.serialize(i[0], i[1]) + ' '
+				line += i.serialize() + ' '
 				for j in self.content[i]:
 					line += str(j) + ':' + str(self.content[i][j]) + ' '
 				f.write(line + '\n')
 
 class State(object):
-	def __init__(self, sence_dist = 10, sence_matrix = None):
-		self.sence_dist = sence_dist
+	def __init__(self, sence_matrix = None):
 		if sence_matrix is None:
 			self.sence_matrix = np.ones((self.sence_dist, self.sence_dist))
 		else:
 			self.sence_matrix = sence_matrix
 
+	def __hash__(self):
+		return hash(self.serialize())
+
+	def __eq__(self, other):
+		if not isinstance(other, State):
+			return NotImplemented
+		return other.serialize() == self.serialize()
+
+	def __ne__(self, other):
+		if not isinstance(other, State):
+			return NotImplemented
+		return other.serialize() != self.serialize()
+
+	def serialize(self):
+		serial = ''
+		for i in self.sence_matrix:
+			for j in i:
+				serial += str(int(j)) + ','
+			serial = serial[:-1]
+			serial += ';'
+		serial = serial[:-1]
+		return serial
+
 class RL_Solver(object):
-	def __init__(self, alpha = 1, gamma = 0.5, epsilon = 0.1, agent_type = 'q_learning'):
+	def __init__(self, alpha = 1, gamma = 0.8, epsilon = 0.1, agent_type = 'q_learning'):
 		self.alpha = alpha
 		self.gamma = gamma
 		self.epsilon = epsilon
@@ -82,4 +101,4 @@ class RL_Solver(object):
 		if agent_type == 'q_learning':
 			self.agent = Q_Learning_Agent(self.alpha, self.gamma, self.epsilon)
 		elif agent_type == 'sarsa':
-			self.agent = Sarsa(self.alpha, self.gamma, self.epsilon)
+			self.agent = Sarsa_Agent(self.alpha, self.gamma, self.epsilon)
